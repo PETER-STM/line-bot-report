@@ -8,7 +8,8 @@ import os
 # 修正：從 Railway 的環境變數中讀取正確的變數名稱
 # 你的變數名稱應該是 'LINE_CHANNEL_ACCESS_TOKEN' 和 'LINE_CHANNEL_SECRET'
 line_channel_access_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
-line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET')
+print(f"Token value: {line_channel_access_token}") # <-- 這裡
+line_bot_api = LineBotApi(line_channel_access_token)
 
 # 使用從環境變數讀取到的金鑰來初始化 LineBotApi 和 WebhookHandler
 # 這會解決 TypeError 的問題

@@ -1,20 +1,26 @@
-from dotenv import load_dotenv
-load_dotenv()
-from flask import Flask, request, abort
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
-from datetime import datetime
 import os
+from dotenv import load_dotenv
+from flask import Flask, request, abort
 
-# 修正：從 Railway 的環境變數中讀取正確的變數名稱
-# 你的變數名稱應該是 'LINE_CHANNEL_ACCESS_TOKEN' 和 'LINE_CHANNEL_SECRET'
+from linebot import (
+    LineBotApi, WebhookHandler
+)
+from linebot.exceptions import (
+    InvalidSignatureError
+)
+from linebot.models import (
+    MessageEvent, TextMessage, TextSendMessage,
+)
+from datetime import datetime
+
+# 確保在本地開發時可以從 .env 檔案載入變數
+load_dotenv()
+
+# 從環境變數中讀取金鑰
 line_channel_access_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
-print(f"Token value: {line_channel_access_token}") # <-- 這裡
-line_bot_api = LineBotApi(line_channel_access_token)
+line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET')
 
 # 使用從環境變數讀取到的金鑰來初始化 LineBotApi 和 WebhookHandler
-# 這會解決 TypeError 的問題
 line_bot_api = LineBotApi(line_channel_access_token)
 handler = WebhookHandler(line_channel_secret)
 
@@ -23,45 +29,23 @@ app = Flask(__name__)
 # Webhook 路由：這是 LINE 傳送訊息過來的網址
 @app.route("/callback", methods=['POST'])
 def callback():
+    # 取得 X-Line-Signature 標頭值
     signature = request.headers['X-Line-Signature']
-    body = request.get_data(as_text=True)
 
+    # 取得請求主體作為文字
+    body = request.get_data(as_text=True)
+    app.logger.info("Request body: " + body)
+
+    # 處理 Webhook 主體
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
+        print("Invalid signature. Please check your channel access token/channel secret.")
         abort(400)
 
     return 'OK'
 
-# 這是我們用來儲存地點費用的對照表，程式啟動時會讀取 costs.txt 檔案
-location_costs = {}
-
-try:
-    with open('costs.txt', 'r', encoding='utf-8') as file:
-        for line in file:
-            line = line.strip()
-            if not line:
-                continue
-
-            parts = line.split(':')
-            location = parts[0]
-            cost_str = parts[1]
-
-            if "平日" in cost_str or "假日" in cost_str:
-                weekday_cost_str, holiday_cost_str = cost_str.split(',')
-                weekday_cost = int(weekday_cost_str.split('-')[1])
-                holiday_cost = int(holiday_cost_str.split('-')[1])
-                location_costs[location] = {
-                    "平日": weekday_cost,
-                    "假日": holiday_cost
-                }
-            else:
-                location_costs[location] = int(cost_str)
-
-except FileNotFoundError:
-    print("找不到 costs.txt 檔案，請確認檔案已建立！")
-    location_costs = {}
-
+# 訊息處理器
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text
@@ -350,8 +334,6 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, reply_message)
     
     else:
+        # 如果不是任何指令，就將原訊息回傳
         reply_message = TextSendMessage(text=user_message)
         line_bot_api.reply_message(event.reply_token, reply_message)
-
-if __name__ == "__main__":
-    app.run()

@@ -5,6 +5,12 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from datetime import datetime
 import os
 
+line_channel_access_token = os.environ.get('UuVtN2HHXq/Si85Q+Ddbaik1ttD+lkNVrCmeXybnX3U8RBWepOQKefnk5bJO6GorL0XvTRDv1woOSYbEIipuzx6s2/nSzmVFk2hsaWVRaeg63yNfdoW9cD3JEEJYCT1k3l7tQRE8J4w0qZ+KUMxe4AdB04t89/1O/w1cDnyilFU=')
+line_channel_secret = os.environ.get('38e125d6e3b36298854bf6bc41149a69')
+
+line_bot_api = LineBotApi(line_channel_access_token)
+handler = WebhookHandler(line_channel_secret)
+
 # 填入你的 Channel Access Token 和 Channel Secret
 line_bot_api = LineBotApi('UuVtN2HHXq/Si85Q+Ddbaik1ttD+lkNVrCmeXybnX3U8RBWepOQKefnk5bJO6GorL0XvTRDv1woOSYbEIipuzx6s2/nSzmVFk2hsaWVRaeg63yNfdoW9cD3JEEJYCT1k3l7tQRE8J4w0qZ+KUMxe4AdB04t89/1O/w1cDnyilFU=')
 handler = WebhookHandler('38e125d6e3b36298854bf6bc41149a69')

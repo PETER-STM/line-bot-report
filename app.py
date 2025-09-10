@@ -11,22 +11,17 @@ from linebot.exceptions import (
 from linebot.models import (
     MessageEvent, TextMessage, TextSendMessage,
 )
-from datetime import datetime
 
-# 確保在本地開發時可以從 .env 檔案載入變數
 load_dotenv()
 
-# 從環境變數中讀取金鑰
+# 確保這兩行都在
 line_channel_access_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
-line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET')
+line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET') # 修正：新增這行
 
-# 使用從環境變數讀取到的金鑰來初始化 LineBotApi 和 WebhookHandler
 line_bot_api = LineBotApi(line_channel_access_token)
 handler = WebhookHandler(line_channel_secret)
 
-app = Flask(__name__)
-
-# Webhook 路由：這是 LINE 傳送訊息過來的網址
+app = Flask(__name__)# Webhook 路由：這是 LINE 傳送訊息過來的網址
 @app.route("/callback", methods=['POST'])
 def callback():
     # 取得 X-Line-Signature 標頭值

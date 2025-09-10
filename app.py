@@ -334,7 +334,7 @@ def handle_message(event):
         
         else:
             # If not a recognized command, echo the message back
-            reply_message = TextSendMessage(text=user_message)
+            reply_message = TextSendMessage(text="無法辨識的指令，請檢查格式。")
             line_bot_api.reply_message(event.reply_token, reply_message)
 
     except Exception as e:

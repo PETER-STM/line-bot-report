@@ -1,0 +1,3 @@
+credentials.json
+git add .
+git commit -m "Add gitignore and remove credentials.json"

@@ -5,15 +5,15 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from datetime import datetime
 import os
 
-line_channel_access_token = os.environ.get('UuVtN2HHXq/Si85Q+Ddbaik1ttD+lkNVrCmeXybnX3U8RBWepOQKefnk5bJO6GorL0XvTRDv1woOSYbEIipuzx6s2/nSzmVFk2hsaWVRaeg63yNfdoW9cD3JEEJYCT1k3l7tQRE8J4w0qZ+KUMxe4AdB04t89/1O/w1cDnyilFU=')
-line_channel_secret = os.environ.get('38e125d6e3b36298854bf6bc41149a69')
+# 修正：從 Railway 的環境變數中讀取正確的變數名稱
+# 你的變數名稱應該是 'LINE_CHANNEL_ACCESS_TOKEN' 和 'LINE_CHANNEL_SECRET'
+line_channel_access_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
+line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET')
 
+# 使用從環境變數讀取到的金鑰來初始化 LineBotApi 和 WebhookHandler
+# 這會解決 TypeError 的問題
 line_bot_api = LineBotApi(line_channel_access_token)
 handler = WebhookHandler(line_channel_secret)
-
-# 填入你的 Channel Access Token 和 Channel Secret
-line_bot_api = LineBotApi('UuVtN2HHXq/Si85Q+Ddbaik1ttD+lkNVrCmeXybnX3U8RBWepOQKefnk5bJO6GorL0XvTRDv1woOSYbEIipuzx6s2/nSzmVFk2hsaWVRaeg63yNfdoW9cD3JEEJYCT1k3l7tQRE8J4w0qZ+KUMxe4AdB04t89/1O/w1cDnyilFU=')
-handler = WebhookHandler('38e125d6e3b36298854bf6bc41149a69')
 
 app = Flask(__name__)
 

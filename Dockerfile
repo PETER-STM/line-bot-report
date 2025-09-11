@@ -5,7 +5,6 @@ FROM python:3.9-slim
 WORKDIR /app
 
 # 將 requirements.txt 複製到工作目錄並安裝所有依賴
-# 使用 --no-cache-dir 確保沒有舊的快取影響
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

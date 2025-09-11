@@ -8,7 +8,6 @@ from psycopg2 import sql
 app = Flask(__name__)
 
 # 從環境變數中讀取 LINE Channel Access Token 和 Channel Secret
-# 這些變數已在 Heroku 的 Config Vars 中設定
 line_channel_access_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET')
 
@@ -29,10 +28,12 @@ def get_db_connection():
 # Webhook 路由
 @app.route("/callback", methods=['POST'])
 def callback():
+    # 取得 X-Line-Signature
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
 
     try:
+        # 處理 Webhook 事件
         handler.handle(body, signature)
     except Exception as e:
         print(f"Webhook handler error: {e}")
@@ -43,17 +44,27 @@ def callback():
 # 處理訊息事件
 @handler.add(MessageEvent)
 def handle_message(event):
+    # 這裡才建立資料庫連線
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
         if isinstance(event.message, TextMessage):
             user_message = event.message.text
             
+            # 回覆訊息
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
                     messages=[TextMessage(text=f"你說了: {user_message}")]
                 )
             )
+
+    # 關閉資料庫連線
+    cur.close()
+    conn.close()
+
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000))

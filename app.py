@@ -17,23 +17,25 @@ handler = WebhookHandler(line_channel_secret)
 
 # 資料庫連線設定
 def get_db_connection():
-    return psycopg2.connect(
-        host=os.environ.get('PGHOST'),
-        database=os.environ.get('PGDATABASE'),
-        user=os.environ.get('PGUSER'),
-        password=os.environ.get('PGPASSWORD'),
-        port=os.environ.get('PGPORT')
-    )
+    try:
+        return psycopg2.connect(
+            host=os.environ.get('PGHOST'),
+            database=os.environ.get('PGDATABASE'),
+            user=os.environ.get('PGUSER'),
+            password=os.environ.get('PGPASSWORD'),
+            port=os.environ.get('PGPORT')
+        )
+    except psycopg2.OperationalError as e:
+        print(f"Database connection error: {e}")
+        return None
 
 # Webhook 路由
 @app.route("/callback", methods=['POST'])
 def callback():
-    # 取得 X-Line-Signature
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
 
     try:
-        # 處理 Webhook 事件
         handler.handle(body, signature)
     except Exception as e:
         print(f"Webhook handler error: {e}")
@@ -46,6 +48,19 @@ def callback():
 def handle_message(event):
     # 這裡才建立資料庫連線
     conn = get_db_connection()
+    if conn is None:
+        # 如果連線失敗，回覆一個錯誤訊息給使用者
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text="抱歉，資料庫連線失敗，請稍後再試。")]
+                )
+            )
+        return
+
+    # 在這裡處理訊息和資料庫操作
     cur = conn.cursor()
     
     with ApiClient(configuration) as api_client:
@@ -53,7 +68,6 @@ def handle_message(event):
         if isinstance(event.message, TextMessage):
             user_message = event.message.text
             
-            # 回覆訊息
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,

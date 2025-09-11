@@ -2,6 +2,10 @@ import os
 from dotenv import load_dotenv
 from flask import Flask, request, abort
 
+# Import the new database-related libraries
+import psycopg2
+from psycopg2 import sql
+
 from linebot import (
     LineBotApi, WebhookHandler
 )
@@ -20,13 +24,257 @@ load_dotenv()
 line_channel_access_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET')
 
+app = Flask(__name__)
+
 # Initialize LineBotApi and WebhookHandler
 line_bot_api = LineBotApi(line_channel_access_token)
 handler = WebhookHandler(line_channel_secret)
 
-app = Flask(__name__)
+# --- 資料庫連線和初始化函式 ---
 
-# Webhook route
+def get_db_connection():
+    """建立資料庫連線"""
+    return psycopg2.connect(
+        host=os.environ.get('PGHOST'),
+        database=os.environ.get('PGDATABASE'),
+        user=os.environ.get('PGUSER'),
+        password=os.environ.get('PGPASSWORD')
+    )
+
+def create_tables():
+    """如果資料表不存在，則建立它們"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # 建立 costs 表
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS costs (
+                location VARCHAR(255) PRIMARY KEY,
+                weekday_cost INTEGER,
+                holiday_cost INTEGER
+            )
+        """)
+
+        # 建立 names 表
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS names (
+                name VARCHAR(255) PRIMARY KEY
+            )
+        """)
+
+        # 建立 records 表
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS records (
+                id SERIAL PRIMARY KEY,
+                date VARCHAR(255),
+                name VARCHAR(255),
+                location VARCHAR(255),
+                cost INTEGER
+            )
+        """)
+        
+        conn.commit()
+        cur.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error creating tables: {error}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+# 在應用程式啟動時建立資料表
+create_tables()
+
+# --- 核心邏輯函式，已從檔案讀寫修改為資料庫操作 ---
+
+# Function to read costs from the database
+def load_costs_from_db():
+    costs = {}
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT location, weekday_cost, holiday_cost FROM costs")
+        records = cur.fetchall()
+        for loc, weekday_cost, holiday_cost in records:
+            if weekday_cost is not None and holiday_cost is not None:
+                costs[loc] = {"平日": weekday_cost, "假日": holiday_cost}
+            elif weekday_cost is not None:
+                costs[loc] = weekday_cost
+        cur.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error loading costs: {error}")
+    finally:
+        if conn is not None:
+            conn.close()
+    return costs
+
+# Function to save a cost to the database
+def save_cost_to_db(location, weekday_cost, holiday_cost=None):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if holiday_cost is not None:
+            cur.execute(
+                "INSERT INTO costs (location, weekday_cost, holiday_cost) VALUES (%s, %s, %s) ON CONFLICT (location) DO UPDATE SET weekday_cost = EXCLUDED.weekday_cost, holiday_cost = EXCLUDED.holiday_cost",
+                (location, weekday_cost, holiday_cost)
+            )
+        else:
+            cur.execute(
+                "INSERT INTO costs (location, weekday_cost) VALUES (%s, %s) ON CONFLICT (location) DO UPDATE SET weekday_cost = EXCLUDED.weekday_cost",
+                (location, weekday_cost)
+            )
+        conn.commit()
+        cur.close()
+        return "success"
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error saving cost: {error}")
+        return f"failed: {error}"
+    finally:
+        if conn is not None:
+            conn.close()
+
+# Function to read names from the database
+def load_names_from_db():
+    names = []
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM names")
+        records = cur.fetchall()
+        for record in records:
+            names.append(record[0])
+        cur.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error loading names: {error}")
+    finally:
+        if conn is not None:
+            conn.close()
+    return names
+
+# Function to add a name to the database
+def add_name_to_db(name):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO names (name) VALUES (%s) ON CONFLICT (name) DO NOTHING",
+            (name,)
+        )
+        conn.commit()
+        cur.close()
+        return "success"
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error adding name: {error}")
+        return f"failed: {error}"
+    finally:
+        if conn is not None:
+            conn.close()
+
+# Function to delete a name from the database
+def delete_name_from_db(name):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM names WHERE name = %s", (name,))
+        rows_deleted = cur.rowcount
+        conn.commit()
+        cur.close()
+        return rows_deleted
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error deleting name: {error}")
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+# Function to delete a location from the database
+def delete_location_from_db(location):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM costs WHERE location = %s", (location,))
+        rows_deleted = cur.rowcount
+        conn.commit()
+        cur.close()
+        return rows_deleted
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error deleting location: {error}")
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+# Function to add a record to the database
+def add_record_to_db(date, name, location, cost):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO records (date, name, location, cost) VALUES (%s, %s, %s, %s)",
+            (date, name, location, cost)
+        )
+        conn.commit()
+        cur.close()
+        return "success"
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error adding record: {error}")
+        return f"failed: {error}"
+    finally:
+        if conn is not None:
+            conn.close()
+
+# Function to delete a record from the database
+def delete_record_from_db(date, name):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM records WHERE date = %s AND name = %s",
+            (date, name)
+        )
+        rows_deleted = cur.rowcount
+        conn.commit()
+        cur.close()
+        return rows_deleted
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error deleting record: {error}")
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+# Function to calculate total cost for a user
+def get_total_cost_for_name(target_name):
+    total_cost = 0
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT cost FROM records WHERE name = %s", (target_name,))
+        records = cur.fetchall()
+        for record in records:
+            total_cost += record[0]
+        cur.close()
+        return total_cost
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error getting total cost: {error}")
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# --- Webhook 路由 ---
+
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -41,103 +289,14 @@ def callback():
 
     return 'OK'
 
-# Message handler
+# --- 訊息處理函式 ---
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    # This try...except block will catch any errors and print them to the chat
     try:
         user_message = event.message.text
         message_parts = user_message.split(' ')
 
-        # Function to read costs from costs.txt
-        def load_costs():
-            costs = {}
-            try:
-                with open('costs.txt', 'r', encoding='utf-8') as file:
-                    for line in file:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        parts = line.split(':')
-                        location = parts[0]
-                        cost_str = parts[1]
-                        if "平日" in cost_str or "假日" in cost_str:
-                            weekday_cost_str, holiday_cost_str = cost_str.split(',')
-                            weekday_cost = int(weekday_cost_str.split('-')[1])
-                            holiday_cost = int(holiday_cost_str.split('-')[1])
-                            costs[location] = {"平日": weekday_cost, "假日": holiday_cost}
-                        else:
-                            costs[location] = int(cost_str)
-            except FileNotFoundError:
-                return {}
-            return costs
-
-        # Function to save costs to costs.txt
-        def save_costs(costs_dict):
-            with open('costs.txt', 'w', encoding='utf-8') as file:
-                for location, cost_value in costs_dict.items():
-                    if isinstance(cost_value, dict):
-                        line = f"{location}:平日-{cost_value['平日']},假日-{cost_value['假日']}\n"
-                    else:
-                        line = f"{location}:{cost_value}\n"
-                    file.write(line)
-        
-        # Function to add a name
-        def add_name(name):
-            try:
-                with open('names.txt', 'a', encoding='utf-8') as file:
-                    file.write(f"{name}\n")
-                return f"已成功新增人名：{name}"
-            except Exception as e:
-                return f"新增人名失敗：{e}"
-
-        # Function to read the list of names
-        def load_names():
-            names = []
-            try:
-                with open('names.txt', 'r', encoding='utf-8') as file:
-                    for line in file:
-                        names.append(line.strip())
-            except FileNotFoundError:
-                return []
-            return names
-
-        # Function to delete a record
-        def delete_record(date_to_delete, name_to_delete):
-            try:
-                with open('record.txt', 'r', encoding='utf-8') as file:
-                    lines = file.readlines()
-                
-                new_lines = []
-                found = False
-                
-                # Keep the header row
-                if lines and lines[0].startswith("日期,人名,地點,金額"):
-                    new_lines.append(lines[0])
-                    data_lines = lines[1:]
-                else:
-                    data_lines = lines
-
-                for line in data_lines:
-                    parts = line.strip().split(',')
-                    if len(parts) >= 2 and parts[0] == date_to_delete and parts[1] == name_to_delete:
-                        found = True
-                    else:
-                        new_lines.append(line)
-                
-                if found:
-                    with open('record.txt', 'w', encoding='utf-8') as file:
-                        file.writelines(new_lines)
-                    return f"已成功刪除 {date_to_delete} {name_to_delete} 的紀錄。"
-                else:
-                    return f"找不到 {date_to_delete} {name_to_delete} 的紀錄。"
-            except FileNotFoundError:
-                return "找不到 record.txt 檔案，無法刪除。"
-            except Exception as e:
-                return f"刪除失敗：{e}"
-
-        # --- Your main logic starts here ---
-        
         # Handle '刪除' command
         if message_parts[0] == "刪除":
             if len(message_parts) >= 2:
@@ -145,10 +304,8 @@ def handle_message(event):
                 if delete_type == "地點":
                     if len(message_parts) == 3:
                         location_to_delete = message_parts[2]
-                        current_costs = load_costs()
-                        if location_to_delete in current_costs:
-                            del current_costs[location_to_delete]
-                            save_costs(current_costs)
+                        rows_deleted = delete_location_from_db(location_to_delete)
+                        if rows_deleted > 0:
                             reply_text = f"已成功刪除地點：{location_to_delete}"
                         else:
                             reply_text = f"找不到地點：{location_to_delete}"
@@ -157,16 +314,9 @@ def handle_message(event):
                 elif delete_type == "人名":
                     if len(message_parts) == 3:
                         name_to_delete = message_parts[2]
-                        names = load_names()
-                        if name_to_delete in names:
-                            names.remove(name_to_delete)
-                            try:
-                                with open('names.txt', 'w', encoding='utf-8') as file:
-                                    for name in names:
-                                        file.write(f"{name}\n")
-                                reply_text = f"已成功刪除人名：{name_to_delete}"
-                            except Exception as e:
-                                reply_text = f"刪除人名失敗：{e}"
+                        rows_deleted = delete_name_from_db(name_to_delete)
+                        if rows_deleted > 0:
+                            reply_text = f"已成功刪除人名：{name_to_delete}"
                         else:
                             reply_text = f"找不到人名：{name_to_delete}"
                     else:
@@ -176,7 +326,11 @@ def handle_message(event):
                         date_to_delete = message_parts[2]
                         name_to_delete = message_parts[3]
                         date_only = date_to_delete.split('(')[0]
-                        reply_text = delete_record(date_only, name_to_delete)
+                        rows_deleted = delete_record_from_db(date_only, name_to_delete)
+                        if rows_deleted > 0:
+                            reply_text = f"已成功刪除 {date_only} {name_to_delete} 的紀錄。"
+                        else:
+                            reply_text = f"找不到 {date_only} {name_to_delete} 的紀錄。"
                     else:
                         reply_text = "刪除紀錄指令格式錯誤！請使用「刪除 紀錄 月/日(星期) 人名」"
                 else:
@@ -184,15 +338,14 @@ def handle_message(event):
             else:
                 reply_text = "刪除指令格式錯誤！請使用「刪除 地點/人名...」"
             
-            reply_message = TextSendMessage(text=reply_text)
-            line_bot_api.reply_message(event.reply_token, reply_message)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
         # Handle '清單' command
         elif message_parts[0] == "清單":
             if len(message_parts) == 2:
                 list_type = message_parts[1]
                 if list_type == "地點":
-                    locations = load_costs()
+                    locations = load_costs_from_db()
                     if locations:
                         reply_text = "地點清單：\n"
                         for loc, cost in locations.items():
@@ -203,7 +356,7 @@ def handle_message(event):
                     else:
                         reply_text = "目前沒有任何地點紀錄。"
                 elif list_type == "人名":
-                    names = load_names()
+                    names = load_names_from_db()
                     if names:
                         reply_text = "人名清單：\n" + "\n".join(names)
                     else:
@@ -213,19 +366,19 @@ def handle_message(event):
             else:
                 reply_text = "清單指令格式錯誤！請使用「清單 地點」或「清單 人名」。"
             
-            reply_message = TextSendMessage(text=reply_text)
-            line_bot_api.reply_message(event.reply_token, reply_message)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
         # Handle '新增' command
         elif message_parts[0] == "新增":
-            current_costs = load_costs()
             if len(message_parts) == 3:
                 location = message_parts[1]
                 try:
                     cost = int(message_parts[2])
-                    current_costs[location] = cost
-                    save_costs(current_costs)
-                    reply_text = f"已新增/更新地點：{location}，金額：{cost}"
+                    result = save_cost_to_db(location, cost)
+                    if result == "success":
+                        reply_text = f"已新增/更新地點：{location}，金額：{cost}"
+                    else:
+                        reply_text = f"新增地點失敗：{result}"
                 except ValueError:
                     reply_text = "錯誤：金額必須是數字！"
             elif len(message_parts) == 6 and message_parts[2] == "平日" and message_parts[4] == "假日":
@@ -233,109 +386,90 @@ def handle_message(event):
                 try:
                     weekday_cost = int(message_parts[3])
                     holiday_cost = int(message_parts[5])
-                    current_costs[location] = {"平日": weekday_cost, "假日": holiday_cost}
-                    save_costs(current_costs)
-                    reply_text = f"已新增/更新地點：{location}，平日：{weekday_cost}，假日：{holiday_cost}"
+                    result = save_cost_to_db(location, weekday_cost, holiday_cost)
+                    if result == "success":
+                        reply_text = f"已新增/更新地點：{location}，平日：{weekday_cost}，假日：{holiday_cost}"
+                    else:
+                        reply_text = f"新增地點失敗：{result}"
                 except ValueError:
                     reply_text = "錯誤：平日或假日金額必須是數字！"
             else:
                 reply_text = "新增指令格式錯誤！請使用「新增 地點 金額」或「新增 地點 平日 金額 假日 金額」"
-            reply_message = TextSendMessage(text=reply_text)
-            line_bot_api.reply_message(event.reply_token, reply_message)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         
         # Handle '新增人名' command
         elif message_parts[0] == "新增人名":
             if len(message_parts) == 2:
                 name_to_add = message_parts[1]
-                reply_text = add_name(name_to_add)
+                result = add_name_to_db(name_to_add)
+                if result == "success":
+                    reply_text = f"已成功新增人名：{name_to_add}"
+                else:
+                    reply_text = f"新增人名失敗：{result}"
             else:
                 reply_text = "新增人名指令格式錯誤！請使用「新增人名 人名」的格式。"
-            reply_message = TextSendMessage(text=reply_text)
-            line_bot_api.reply_message(event.reply_token, reply_message)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         
         # Handle '統計' command
         elif message_parts[0] == "統計":
             if len(message_parts) == 2:
                 target_name = message_parts[1]
-                total_cost = 0
-                found_records = False
+                total_cost = get_total_cost_for_name(target_name)
                 
-                try:
-                    with open('record.txt', 'r', encoding='utf-8') as file:
-                        for line in file:
-                            if line.startswith("日期,人名,地點,金額"):
-                                continue
-                            parts = line.strip().split(',')
-                            if len(parts) == 4 and parts[1] == target_name:
-                                try:
-                                    cost = int(parts[3])
-                                    total_cost += cost
-                                    found_records = True
-                                except ValueError:
-                                    continue
-                    
-                    if found_records:
-                        reply_text = f"{target_name} 的通路費總計為：{total_cost}"
-                    else:
-                        reply_text = f"找不到 {target_name} 的任何通路費紀錄。"
-                except FileNotFoundError:
-                    reply_text = "找不到 record.txt 檔案，無法進行統計。"
+                if total_cost > 0:
+                    reply_text = f"{target_name} 的通路費總計為：{total_cost}"
+                else:
+                    reply_text = f"找不到 {target_name} 的任何通路費紀錄。"
             else:
                 reply_text = "統計指令格式錯誤！請使用「統計 人名」的格式。"
-            reply_message = TextSendMessage(text=reply_text)
-            line_bot_api.reply_message(event.reply_token, reply_message)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             
         elif len(message_parts) == 3:
             # Handle '日期 人名 地點' format
             try:
-                location_costs_reloaded = load_costs()
+                location_costs = load_costs_from_db()
                 date_only = message_parts[0].split('(')[0]
-                current_year = datetime.now().year
-                full_date_string = f"{date_only}/{current_year}"
                 
                 try:
+                    current_year = datetime.now().year
+                    full_date_string = f"{date_only}/{current_year}"
                     date_object = datetime.strptime(full_date_string, "%m/%d/%Y")
                     weekday_number = date_object.weekday()
                     is_weekend = weekday_number >= 5
                 except ValueError:
-                    reply_message = TextSendMessage(text="日期格式錯誤！請使用「月/日」或「月/日(星期)」的格式。")
-                    line_bot_api.reply_message(event.reply_token, reply_message)
+                    reply_text = "日期格式錯誤！請使用「月/日」或「月/日(星期)」的格式。"
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                     return
 
                 name = message_parts[1]
                 location = message_parts[2]
-                if location in location_costs_reloaded:
-                    cost_value = location_costs_reloaded[location]
+                
+                if location in location_costs:
+                    cost_value = location_costs[location]
                     if isinstance(cost_value, dict):
-                        if is_weekend:
-                            cost = cost_value["假日"]
-                        else:
-                            cost = cost_value["平日"]
+                        cost = cost_value["假日"] if is_weekend else cost_value["平日"]
                     else:
                         cost = cost_value
                 else:
-                    cost = "未知金額"
-
-                file_exists = os.path.isfile('record.txt')
-                file_is_empty = not file_exists or os.stat('record.txt').st_size == 0
-                record_line = f"{date_only},{name},{location},{cost}\n"
-
-                with open('record.txt', 'a', encoding='utf-8') as file:
-                    if file_is_empty:
-                        file.write("日期,人名,地點,金額\n")
-                    file.write(record_line)
+                    cost = 0 # 找不到地點則設為 0
                 
-                reply_message = TextSendMessage(text=f"已成功紀錄：{date_only}, {name}, {location}")
-                line_bot_api.reply_message(event.reply_token, reply_message)
+                result = add_record_to_db(date_only, name, location, cost)
+                
+                if result == "success":
+                    reply_text = f"已成功紀錄：{date_only}, {name}, {location}, 金額: {cost}"
+                else:
+                    reply_text = f"紀錄失敗：{result}"
+
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
             except IndexError:
-                reply_message = TextSendMessage(text="格式錯誤！請使用「日期 人名 地點」的格式。")
-                line_bot_api.reply_message(event.reply_token, reply_message)
+                reply_text = "格式錯誤！請使用「日期 人名 地點」的格式。"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         
         else:
-            # If not a recognized command, echo the message back
-            reply_message = TextSendMessage(text="無法辨識的指令，請檢查格式。")
-            line_bot_api.reply_message(event.reply_token, reply_message)
+            # If not a recognized command, reply with an unrecognized message
+            reply_text = "無法辨識的指令，請檢查格式。"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
     except Exception as e:
         # If any unexpected error occurs, reply with the error message
@@ -343,3 +477,7 @@ def handle_message(event):
             event.reply_token,
             TextSendMessage(text=f"發生錯誤：{e}")
         )
+
+# Main entry point
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=os.getenv('PORT'))

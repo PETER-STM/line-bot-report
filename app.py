@@ -1,12 +1,8 @@
 import os
 from dotenv import load_dotenv
 from flask import Flask, request, abort
-
-# Import the new database-related libraries
 import psycopg2
 from psycopg2 import sql
-
-# Update the import statements to use the new v3 classes
 from linebot.v3.messaging import (
     Configuration,
     ApiClient,
@@ -22,23 +18,17 @@ from linebot.v3.webhooks import (
 )
 from datetime import datetime
 
-# Load variables from .env file for local development
 load_dotenv()
 
-# Read keys from environment variables
 line_channel_access_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET')
 
 app = Flask(__name__)
 
-# Initialize LineBotApi and WebhookHandler using v3 syntax
 configuration = Configuration(access_token=line_channel_access_token)
 handler = WebhookHandler(line_channel_secret)
 
-# --- 資料庫連線和初始化函式 ---
-
 def get_db_connection():
-    """建立資料庫連線"""
     return psycopg2.connect(
         host=os.environ.get('PGHOST'),
         database=os.environ.get('PGDATABASE'),
@@ -48,13 +38,10 @@ def get_db_connection():
     )
 
 def create_tables():
-    """如果資料表不存在，則建立它們"""
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
-        # 建立 costs 表
         cur.execute("""
             CREATE TABLE IF NOT EXISTS costs (
                 location VARCHAR(255) PRIMARY KEY,
@@ -62,15 +49,11 @@ def create_tables():
                 holiday_cost INTEGER
             )
         """)
-
-        # 建立 names 表
         cur.execute("""
             CREATE TABLE IF NOT EXISTS names (
                 name VARCHAR(255) PRIMARY KEY
             )
         """)
-
-        # 建立 records 表
         cur.execute("""
             CREATE TABLE IF NOT EXISTS records (
                 id SERIAL PRIMARY KEY,
@@ -80,7 +63,6 @@ def create_tables():
                 cost INTEGER
             )
         """)
-        
         conn.commit()
         cur.close()
     except (Exception, psycopg2.DatabaseError) as error:
@@ -89,12 +71,8 @@ def create_tables():
         if conn is not None:
             conn.close()
 
-# 在應用程式啟動時建立資料表
 create_tables()
 
-# --- 核心邏輯函式，已從檔案讀寫修改為資料庫操作 ---
-
-# Function to read costs from the database
 def load_costs_from_db():
     costs = {}
     conn = None
@@ -116,7 +94,6 @@ def load_costs_from_db():
             conn.close()
     return costs
 
-# Function to save a cost to the database
 def save_cost_to_db(location, weekday_cost, holiday_cost=None):
     conn = None
     try:
@@ -142,7 +119,6 @@ def save_cost_to_db(location, weekday_cost, holiday_cost=None):
         if conn is not None:
             conn.close()
 
-# Function to read names from the database
 def load_names_from_db():
     names = []
     conn = None
@@ -161,7 +137,6 @@ def load_names_from_db():
             conn.close()
     return names
 
-# Function to add a name to the database
 def add_name_to_db(name):
     conn = None
     try:
@@ -181,7 +156,6 @@ def add_name_to_db(name):
         if conn is not None:
             conn.close()
 
-# Function to delete a name from the database
 def delete_name_from_db(name):
     conn = None
     try:
@@ -199,7 +173,6 @@ def delete_name_from_db(name):
         if conn is not None:
             conn.close()
 
-# Function to delete a location from the database
 def delete_location_from_db(location):
     conn = None
     try:
@@ -217,7 +190,6 @@ def delete_location_from_db(location):
         if conn is not None:
             conn.close()
 
-# Function to add a record to the database
 def add_record_to_db(date, name, location, cost):
     conn = None
     try:
@@ -237,7 +209,6 @@ def add_record_to_db(date, name, location, cost):
         if conn is not None:
             conn.close()
 
-# Function to delete a record from the database
 def delete_record_from_db(date, name):
     conn = None
     try:
@@ -258,7 +229,6 @@ def delete_record_from_db(date, name):
         if conn is not None:
             conn.close()
 
-# Function to calculate total cost for a user
 def get_total_cost_for_name(target_name):
     total_cost = 0
     conn = None
@@ -278,14 +248,12 @@ def get_total_cost_for_name(target_name):
         if conn is not None:
             conn.close()
 
-# Function to calculate total cost for a user in a specific month
 def get_monthly_cost_for_name(target_name, target_month):
     total_cost = 0
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Use LIKE to match the month part of the date string (e.g., '12/%')
         cur.execute("SELECT cost FROM records WHERE name = %s AND date LIKE %s", (target_name, f'{target_month}/%',))
         records = cur.fetchall()
         for record in records:
@@ -299,25 +267,18 @@ def get_monthly_cost_for_name(target_name, target_month):
         if conn is not None:
             conn.close()
 
-# Function to get monthly summary for all names
 def get_monthly_summary(target_month, target_year):
     summary = {}
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
-        # 使用 LIKE 語法查詢特定月份的紀錄
         cur.execute("SELECT name, cost FROM records WHERE date LIKE %s", (f'{target_month}/%',))
-        
         records = cur.fetchall()
-        
         if not records:
-            return None # 如果沒有紀錄則回傳 None
-
+            return None
         for name, cost in records:
             summary[name] = summary.get(name, 0) + cost
-            
         cur.close()
         return summary
     except (Exception, psycopg2.DatabaseError) as error:
@@ -327,36 +288,27 @@ def get_monthly_summary(target_month, target_year):
         if conn is not None:
             conn.close()
 
-# --- Webhook 路由 ---
-
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
-
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         print("Invalid signature. Please check your channel access token/channel secret.")
         abort(400)
-
     return 'OK'
-
-# --- 訊息處理函式 ---
 
 @handler.add(MessageEvent)
 def handle_message(event):
+    if not isinstance(event.message, TextMessageContent):
+        return
+    user_message = event.message.text.strip()
+    message_parts = user_message.split(' ')
+    reply_text = "無法辨識的指令，請檢查格式。需要協助請輸入「說明書」或「說明」。"
+    
     try:
-        if not isinstance(event.message, TextMessageContent):
-            return
-        
-        user_message = event.message.text.strip()
-        message_parts = user_message.split(' ')
-        
-        reply_text = "無法辨識的指令，請檢查格式。" # default reply
-
-        # Handle '說明書' command
         if message_parts[0] == "說明書" or message_parts[0] == "說明":
             reply_text = """通路費記錄小幫手使用說明：
 
@@ -400,7 +352,6 @@ def handle_message(event):
 - 刪除 紀錄 日期 人名：刪除某天某位使用者的紀錄。
   - 例：刪除 紀錄 12/25 小明"""
             
-        # Handle '刪除' command
         elif message_parts[0] == "刪除":
             if len(message_parts) >= 2:
                 delete_type = message_parts[1]
@@ -441,7 +392,6 @@ def handle_message(event):
             else:
                 reply_text = "刪除指令格式錯誤！請使用「刪除 地點/人名...」"
 
-        # Handle '清單' command
         elif message_parts[0] == "清單":
             if len(message_parts) == 2:
                 list_type = message_parts[1]
@@ -467,7 +417,6 @@ def handle_message(event):
             else:
                 reply_text = "清單指令格式錯誤！請使用「清單 地點」或「清單 人名」。"
 
-        # Handle '新增' command
         elif message_parts[0] == "新增":
             if len(message_parts) == 3:
                 location = message_parts[1]
@@ -495,7 +444,6 @@ def handle_message(event):
             else:
                 reply_text = "新增指令格式錯誤！請使用「新增 地點 金額」或「新增 地點 平日 金額 假日 金額」"
         
-        # Handle '新增人名' command
         elif message_parts[0] == "新增人名":
             if len(message_parts) == 2:
                 name_to_add = message_parts[1]
@@ -507,7 +455,6 @@ def handle_message(event):
             else:
                 reply_text = "新增人名指令格式錯誤！請使用「新增人名 人名」的格式。"
         
-        # Handle '統計' command
         elif message_parts[0] == "統計":
             if len(message_parts) == 2:
                 if message_parts[1].endswith("月"):
@@ -516,14 +463,11 @@ def handle_message(event):
                         target_month = int(month_str)
                         current_year = datetime.now().year
                         current_month = datetime.now().month
-                        
                         if target_month > current_month:
                             target_year = current_year - 1
                         else:
                             target_year = current_year
-
                         summary = get_monthly_summary(target_month, target_year)
-                        
                         if summary:
                             reply_text = f"{target_year}年{target_month}月總通路費統計：\n"
                             for name, total_cost in summary.items():
@@ -534,24 +478,19 @@ def handle_message(event):
                     except ValueError:
                         reply_text = "統計月份指令格式錯誤！請使用「統計 月份」(例如：統計 12月)。"
                 else:
-                    # Handle total cost for a user
                     target_name = message_parts[1]
                     total_cost = get_total_cost_for_name(target_name)
-                    
                     if total_cost > 0:
                         reply_text = f"{target_name} 的通路費總計為：{total_cost}"
                     else:
                         reply_text = f"找不到 {target_name} 的任何通路費紀錄。"
             elif len(message_parts) == 3:
-                # Handle '統計 人名 月份' format
                 target_name = message_parts[1]
                 target_month_str = message_parts[2]
-                
                 if target_month_str.endswith("月"):
                     try:
                         target_month = int(target_month_str.replace("月", ""))
                         total_cost = get_monthly_cost_for_name(target_name, target_month)
-                        
                         if total_cost > 0:
                             reply_text = f"{target_name} 在 {target_month}月 的通路費總計為：{total_cost}"
                         else:
@@ -563,11 +502,9 @@ def handle_message(event):
             else:
                 reply_text = "統計指令格式錯誤！請使用「統計 人名」、「統計 月份」或「統計 人名 月份」。"
         
-        # Handle '日期 人名 地點' and '日期 人名 地點 金額' format
         elif len(message_parts) >= 3:
             try:
                 date_only = message_parts[0].split('(')[0]
-                
                 try:
                     current_year = datetime.now().year
                     full_date_string = f"{date_only}/{current_year}"
@@ -577,20 +514,16 @@ def handle_message(event):
                 except ValueError:
                     reply_text = "日期格式錯誤！請使用「月/日」或「月/日(星期)」的格式。"
                     raise Exception(reply_text)
-                
                 name = message_parts[1]
                 location = message_parts[2]
                 cost = None
-                
                 if len(message_parts) == 4:
-                    # User provided the cost directly
                     try:
                         cost = int(message_parts[3])
                     except ValueError:
                         reply_text = "錯誤：金額必須是數字！"
                         raise Exception(reply_text)
                 else:
-                    # Look up cost from database
                     location_costs = load_costs_from_db()
                     if location in location_costs:
                         cost_value = location_costs[location]
@@ -599,40 +532,28 @@ def handle_message(event):
                         else:
                             cost = cost_value
                     else:
-                        cost = 0 # If location not found, default to 0
-                
+                        cost = 0
                 if cost is not None:
                     result = add_record_to_db(date_only, name, location, cost)
-                    
                     if result == "success":
                         reply_text = f"已成功紀錄：{date_only}, {name}, {location}, 金額: {cost}"
                     else:
                         reply_text = f"紀錄失敗：{result}"
-
             except IndexError:
                 reply_text = "格式錯誤！請使用「日期 人名 地點」或「日期 人名 地點 金額」的格式。"
-        
-        # Send the final reply
-        with ApiClient(configuration) as api_client:
-            line_bot_api_v3 = MessagingApi(api_client)
-            line_bot_api_v3.reply_message(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=reply_text)]
-                )
-            )
-
+    
     except Exception as e:
-        # If any unexpected error occurs, reply with the error message
-        with ApiClient(configuration) as api_client:
-            line_bot_api_v3 = MessagingApi(api_client)
-            line_bot_api_v3.reply_message(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=f"發生錯誤：{e}")]
-                )
-            )
+        reply_text = f"處理您的訊息時發生未知錯誤。錯誤訊息：{e}"
 
-# Main entry point
+    # Send the final reply
+    with ApiClient(configuration) as api_client:
+        line_bot_api_v3 = MessagingApi(api_client)
+        line_bot_api_v3.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=reply_text)]
+            )
+        )
+
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=os.getenv('PORT'))

@@ -229,25 +229,6 @@ def delete_record_from_db(date, name):
         if conn is not None:
             conn.close()
 
-def get_total_cost_for_name(target_name):
-    total_cost = 0
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT cost FROM records WHERE name = %s", (target_name,))
-        records = cur.fetchall()
-        for record in records:
-            total_cost += record[0]
-        cur.close()
-        return total_cost
-    except (Exception, psycopg2.DatabaseError) as error:
-        print(f"Error getting total cost: {error}")
-        return 0
-    finally:
-        if conn is not None:
-            conn.close()
-
 def get_monthly_cost_for_name(target_name, target_month):
     total_cost = 0
     conn = None
@@ -263,27 +244,6 @@ def get_monthly_cost_for_name(target_name, target_month):
     except (Exception, psycopg2.DatabaseError) as error:
         print(f"Error getting monthly cost for name: {error}")
         return 0
-    finally:
-        if conn is not None:
-            conn.close()
-
-def get_monthly_summary(target_month, target_year):
-    summary = {}
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT name, cost FROM records WHERE date LIKE %s", (f'{target_month}/%',))
-        records = cur.fetchall()
-        if not records:
-            return None
-        for name, cost in records:
-            summary[name] = summary.get(name, 0) + cost
-        cur.close()
-        return summary
-    except (Exception, psycopg2.DatabaseError) as error:
-        print(f"Error getting monthly summary: {error}")
-        return None
     finally:
         if conn is not None:
             conn.close()
@@ -414,43 +374,19 @@ def handle_message(event):
                 else:
                     reply_text = f"新增人名失敗：{result}"
             else:
-        # handle '統計' command
+                reply_text = "新增人名指令格式錯誤！請使用「新增人名 人名」的格式。"
+        
+        # Handle '統計' command
         elif message_parts[0] == "統計":
-            if len(message_parts) == 2:
-                if message_parts[1].endswith("月"):
-                    try:
-                        month_str = message_parts[1].replace("月", "")
-                        target_month = int(month_str)
-                        current_year = datetime.now().year
-                        current_month = datetime.now().month
-                        if target_month > current_month:
-                            target_year = current_year - 1
-                        else:
-                            target_year = current_year
-                        summary = get_monthly_summary(target_month, target_year)
-                        if summary:
-                            reply_text = f"{target_year}年{target_month}月總通路費統計：\n"
-                            for name, total_cost in summary.items():
-                                reply_text += f"{name}: {total_cost}\n"
-                            reply_text += "\n若需刪除紀錄，請使用「刪除 紀錄 月/日(星期) 人名」"
-                        else:
-                            reply_text = f"{target_year}年{target_month}月沒有任何通路費紀錄。"
-                    except ValueError:
-                        reply_text = "統計月份指令格式錯誤！請使用「統計 月份」(例如：統計 12月)。"
-                else:
-                    target_name = message_parts[1]
-                    total_cost = get_total_cost_for_name(target_name)
-                    if total_cost > 0:
-                        reply_text = f"{target_name} 的通路費總計為：{total_cost}"
-                    else:
-                        reply_text = f"找不到 {target_name} 的任何通路費紀錄。"
-            elif len(message_parts) == 3:
+            if len(message_parts) == 3:
                 target_name = message_parts[1]
                 target_month_str = message_parts[2]
+                
                 if target_month_str.endswith("月"):
                     try:
                         target_month = int(target_month_str.replace("月", ""))
                         total_cost = get_monthly_cost_for_name(target_name, target_month)
+                        
                         if total_cost > 0:
                             reply_text = f"{target_name} 在 {target_month}月 的通路費總計為：{total_cost}"
                         else:
@@ -460,7 +396,7 @@ def handle_message(event):
                 else:
                     reply_text = "統計指令格式錯誤！月份必須是「數字+月」。(例如：統計 小明 12月)。"
             else:
-                reply_text = "統計指令格式錯誤！請使用「統計 人名」、「統計 月份」或「統計 人名 月份」。"
+                reply_text = "統計指令格式錯誤！請使用「統計 人名 月份」。"
         
         # Handle '日期 人名 地點' and '日期 人名 地點 金額' format
         elif len(message_parts) >= 3:

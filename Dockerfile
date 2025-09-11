@@ -1,15 +1,16 @@
-# 使用官方 Python 基礎映像檔
+# 使用官方 Python 3.9 的精簡版作為基礎映像檔
 FROM python:3.9-slim
 
-# 設定工作目錄
+# 設定容器中的工作目錄
 WORKDIR /app
 
-# 複製 requirements.txt 並安裝依賴套件
+# 將 requirements.txt 複製到工作目錄並安裝所有依賴
+# 使用 --no-cache-dir 確保沒有舊的快取影響
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 複製專案程式碼
+# 複製專案中的所有檔案到容器裡
 COPY . .
 
-# 設定啟動指令
+# 設定容器啟動時的指令
 CMD gunicorn app:app

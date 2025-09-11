@@ -278,6 +278,54 @@ def get_total_cost_for_name(target_name):
         if conn is not None:
             conn.close()
 
+# Function to calculate total cost for a user in a specific month
+def get_monthly_cost_for_name(target_name, target_month):
+    total_cost = 0
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # Use LIKE to match the month part of the date string (e.g., '12/%')
+        cur.execute("SELECT cost FROM records WHERE name = %s AND date LIKE %s", (target_name, f'{target_month}/%',))
+        records = cur.fetchall()
+        for record in records:
+            total_cost += record[0]
+        cur.close()
+        return total_cost
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error getting monthly cost for name: {error}")
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+# Function to get monthly summary for all names
+def get_monthly_summary(target_month, target_year):
+    summary = {}
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # 使用 LIKE 語法查詢特定月份的紀錄
+        cur.execute("SELECT name, cost FROM records WHERE date LIKE %s", (f'{target_month}/%',))
+        
+        records = cur.fetchall()
+        
+        if not records:
+            return None # 如果沒有紀錄則回傳 None
+
+        for name, cost in records:
+            summary[name] = summary.get(name, 0) + cost
+            
+        cur.close()
+        return summary
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"Error getting monthly summary: {error}")
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
 
 # --- Webhook 路由 ---
 
@@ -303,10 +351,9 @@ def handle_message(event):
         if not isinstance(event.message, TextMessageContent):
             return
         
-        user_message = event.message.text
+        user_message = event.message.text.strip()
         message_parts = user_message.split(' ')
         
-        # All existing logic remains the same, but the reply part needs to change
         reply_text = "無法辨識的指令，請檢查格式。" # default reply
 
         # Handle '刪除' command
@@ -419,20 +466,62 @@ def handle_message(event):
         # Handle '統計' command
         elif message_parts[0] == "統計":
             if len(message_parts) == 2:
-                target_name = message_parts[1]
-                total_cost = get_total_cost_for_name(target_name)
-                
-                if total_cost > 0:
-                    reply_text = f"{target_name} 的通路費總計為：{total_cost}"
+                if message_parts[1].endswith("月"):
+                    try:
+                        month_str = message_parts[1].replace("月", "")
+                        target_month = int(month_str)
+                        current_year = datetime.now().year
+                        current_month = datetime.now().month
+                        
+                        if target_month > current_month:
+                            target_year = current_year - 1
+                        else:
+                            target_year = current_year
+
+                        summary = get_monthly_summary(target_month, target_year)
+                        
+                        if summary:
+                            reply_text = f"{target_year}年{target_month}月總通路費統計：\n"
+                            for name, total_cost in summary.items():
+                                reply_text += f"{name}: {total_cost}\n"
+                            reply_text += "\n若需刪除紀錄，請使用「刪除 紀錄 月/日(星期) 人名」"
+                        else:
+                            reply_text = f"{target_year}年{target_month}月沒有任何通路費紀錄。"
+                    except ValueError:
+                        reply_text = "統計月份指令格式錯誤！請使用「統計 月份」(例如：統計 12月)。"
                 else:
-                    reply_text = f"找不到 {target_name} 的任何通路費紀錄。"
+                    # Handle total cost for a user
+                    target_name = message_parts[1]
+                    total_cost = get_total_cost_for_name(target_name)
+                    
+                    if total_cost > 0:
+                        reply_text = f"{target_name} 的通路費總計為：{total_cost}"
+                    else:
+                        reply_text = f"找不到 {target_name} 的任何通路費紀錄。"
+            elif len(message_parts) == 3:
+                # Handle '統計 人名 月份' format
+                target_name = message_parts[1]
+                target_month_str = message_parts[2]
+                
+                if target_month_str.endswith("月"):
+                    try:
+                        target_month = int(target_month_str.replace("月", ""))
+                        total_cost = get_monthly_cost_for_name(target_name, target_month)
+                        
+                        if total_cost > 0:
+                            reply_text = f"{target_name} 在 {target_month}月 的通路費總計為：{total_cost}"
+                        else:
+                            reply_text = f"找不到 {target_name} 在 {target_month}月 的任何通路費紀錄。"
+                    except ValueError:
+                        reply_text = "統計指令格式錯誤！月份必須是數字。(例如：統計 小明 12月)。"
+                else:
+                    reply_text = "統計指令格式錯誤！月份必須是「數字+月」。(例如：統計 小明 12月)。"
             else:
-                reply_text = "統計指令格式錯誤！請使用「統計 人名」的格式。"
+                reply_text = "統計指令格式錯誤！請使用「統計 人名」、「統計 月份」或「統計 人名 月份」。"
         
-        elif len(message_parts) == 3:
-            # Handle '日期 人名 地點' format
+        # Handle '日期 人名 地點' and '日期 人名 地點 金額' format
+        elif len(message_parts) >= 3:
             try:
-                location_costs = load_costs_from_db()
                 date_only = message_parts[0].split('(')[0]
                 
                 try:
@@ -443,30 +532,41 @@ def handle_message(event):
                     is_weekend = weekday_number >= 5
                 except ValueError:
                     reply_text = "日期格式錯誤！請使用「月/日」或「月/日(星期)」的格式。"
-                    # The reply message is sent outside the try block
-                    raise Exception(reply_text) # Raise an exception to handle the reply outside
+                    raise Exception(reply_text)
                 
                 name = message_parts[1]
                 location = message_parts[2]
+                cost = None
                 
-                if location in location_costs:
-                    cost_value = location_costs[location]
-                    if isinstance(cost_value, dict):
-                        cost = cost_value["假日"] if is_weekend else cost_value["平日"]
+                if len(message_parts) == 4:
+                    # User provided the cost directly
+                    try:
+                        cost = int(message_parts[3])
+                    except ValueError:
+                        reply_text = "錯誤：金額必須是數字！"
+                        raise Exception(reply_text)
+                else:
+                    # Look up cost from database
+                    location_costs = load_costs_from_db()
+                    if location in location_costs:
+                        cost_value = location_costs[location]
+                        if isinstance(cost_value, dict):
+                            cost = cost_value["假日"] if is_weekend else cost_value["平日"]
+                        else:
+                            cost = cost_value
                     else:
-                        cost = cost_value
-                else:
-                    cost = 0 # 找不到地點則設為 0
+                        cost = 0 # If location not found, default to 0
                 
-                result = add_record_to_db(date_only, name, location, cost)
-                
-                if result == "success":
-                    reply_text = f"已成功紀錄：{date_only}, {name}, {location}, 金額: {cost}"
-                else:
-                    reply_text = f"紀錄失敗：{result}"
+                if cost is not None:
+                    result = add_record_to_db(date_only, name, location, cost)
+                    
+                    if result == "success":
+                        reply_text = f"已成功紀錄：{date_only}, {name}, {location}, 金額: {cost}"
+                    else:
+                        reply_text = f"紀錄失敗：{result}"
 
             except IndexError:
-                reply_text = "格式錯誤！請使用「日期 人名 地點」的格式。"
+                reply_text = "格式錯誤！請使用「日期 人名 地點」或「日期 人名 地點 金額」的格式。"
         
         # Send the final reply
         with ApiClient(configuration) as api_client:

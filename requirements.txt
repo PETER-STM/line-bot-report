@@ -1,6 +1,5 @@
-Flask
-line-bot-sdk
-gunicorn
-python-dotenv
-psycopg2-binary
-SQLAlchemy
+Flask==3.0.0
+line-bot-sdk==3.7.0  # 確保版本號是3.x.x
+python-dotenv==1.0.0
+gunicorn==22.0.0
+psycopg2-binary==2.9.9

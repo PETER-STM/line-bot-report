@@ -6,14 +6,19 @@ from flask import Flask, request, abort
 import psycopg2
 from psycopg2 import sql
 
-from linebot import (
-    LineBotApi, WebhookHandler
+# Update the import statements to use the new v3 classes
+from linebot.v3.messaging import (
+    Configuration,
+    ApiClient,
+    MessagingApi,
+    ReplyMessageRequest,
+    TextMessage
 )
-from linebot.exceptions import (
-    InvalidSignatureError
-)
-from linebot.models import (
-    MessageEvent, TextMessage, TextSendMessage,
+from linebot.v3.exceptions import InvalidSignatureError
+from linebot.v3.webhooks import (
+    WebhookHandler,
+    MessageEvent,
+    TextMessageContent
 )
 from datetime import datetime
 
@@ -26,8 +31,8 @@ line_channel_secret = os.environ.get('LINE_CHANNEL_SECRET')
 
 app = Flask(__name__)
 
-# Initialize LineBotApi and WebhookHandler
-line_bot_api = LineBotApi(line_channel_access_token)
+# Initialize LineBotApi and WebhookHandler using v3 syntax
+configuration = Configuration(access_token=line_channel_access_token)
 handler = WebhookHandler(line_channel_secret)
 
 # --- 資料庫連線和初始化函式 ---
@@ -292,11 +297,17 @@ def callback():
 
 # --- 訊息處理函式 ---
 
-@handler.add(MessageEvent, message=TextMessage)
+@handler.add(MessageEvent)
 def handle_message(event):
     try:
+        if not isinstance(event.message, TextMessageContent):
+            return
+        
         user_message = event.message.text
         message_parts = user_message.split(' ')
+        
+        # All existing logic remains the same, but the reply part needs to change
+        reply_text = "無法辨識的指令，請檢查格式。" # default reply
 
         # Handle '刪除' command
         if message_parts[0] == "刪除":
@@ -338,8 +349,6 @@ def handle_message(event):
                     reply_text = "刪除指令格式錯誤！請使用「刪除 地點/人名/紀錄...」"
             else:
                 reply_text = "刪除指令格式錯誤！請使用「刪除 地點/人名...」"
-            
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
         # Handle '清單' command
         elif message_parts[0] == "清單":
@@ -366,8 +375,6 @@ def handle_message(event):
                     reply_text = "清單指令格式錯誤！請使用「清單 地點」或「清單 人名」。"
             else:
                 reply_text = "清單指令格式錯誤！請使用「清單 地點」或「清單 人名」。"
-            
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
         # Handle '新增' command
         elif message_parts[0] == "新增":
@@ -396,7 +403,6 @@ def handle_message(event):
                     reply_text = "錯誤：平日或假日金額必須是數字！"
             else:
                 reply_text = "新增指令格式錯誤！請使用「新增 地點 金額」或「新增 地點 平日 金額 假日 金額」"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         
         # Handle '新增人名' command
         elif message_parts[0] == "新增人名":
@@ -409,7 +415,6 @@ def handle_message(event):
                     reply_text = f"新增人名失敗：{result}"
             else:
                 reply_text = "新增人名指令格式錯誤！請使用「新增人名 人名」的格式。"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         
         # Handle '統計' command
         elif message_parts[0] == "統計":
@@ -423,8 +428,7 @@ def handle_message(event):
                     reply_text = f"找不到 {target_name} 的任何通路費紀錄。"
             else:
                 reply_text = "統計指令格式錯誤！請使用「統計 人名」的格式。"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-            
+        
         elif len(message_parts) == 3:
             # Handle '日期 人名 地點' format
             try:
@@ -439,9 +443,9 @@ def handle_message(event):
                     is_weekend = weekday_number >= 5
                 except ValueError:
                     reply_text = "日期格式錯誤！請使用「月/日」或「月/日(星期)」的格式。"
-                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-                    return
-
+                    # The reply message is sent outside the try block
+                    raise Exception(reply_text) # Raise an exception to handle the reply outside
+                
                 name = message_parts[1]
                 location = message_parts[2]
                 
@@ -461,23 +465,29 @@ def handle_message(event):
                 else:
                     reply_text = f"紀錄失敗：{result}"
 
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-
             except IndexError:
                 reply_text = "格式錯誤！請使用「日期 人名 地點」的格式。"
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         
-        else:
-            # If not a recognized command, reply with an unrecognized message
-            reply_text = "無法辨識的指令，請檢查格式。"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        # Send the final reply
+        with ApiClient(configuration) as api_client:
+            line_bot_api_v3 = MessagingApi(api_client)
+            line_bot_api_v3.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_text)]
+                )
+            )
 
     except Exception as e:
         # If any unexpected error occurs, reply with the error message
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f"發生錯誤：{e}")
-        )
+        with ApiClient(configuration) as api_client:
+            line_bot_api_v3 = MessagingApi(api_client)
+            line_bot_api_v3.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=f"發生錯誤：{e}")]
+                )
+            )
 
 # Main entry point
 if __name__ == "__main__":

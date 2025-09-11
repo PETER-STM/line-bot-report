@@ -1,7 +1,10 @@
 import os
 from flask import Flask, request, abort
+
 from linebot.v3.webhooks import WebhookHandler
 from linebot.v3.messaging import Configuration, ApiClient, MessagingApi, ReplyMessageRequest, TextMessage
+from linebot.v3.exceptions import InvalidSignatureError
+from linebot.v3.webhooks import MessageEvent, TextMessageContent
 import psycopg2
 from psycopg2 import sql
 
@@ -37,6 +40,8 @@ def callback():
 
     try:
         handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
     except Exception as e:
         print(f"Webhook handler error: {e}")
         abort(400)
@@ -44,7 +49,7 @@ def callback():
     return 'OK'
 
 # 處理訊息事件
-@handler.add(MessageEvent)
+@handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     # 這裡才建立資料庫連線
     conn = get_db_connection()
@@ -65,20 +70,18 @@ def handle_message(event):
     
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
-        if isinstance(event.message, TextMessage):
-            user_message = event.message.text
-            
-            line_bot_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=f"你說了: {user_message}")]
-                )
+        user_message = event.message.text
+        
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=f"你說了: {user_message}")]
             )
+        )
 
     # 關閉資料庫連線
     cur.close()
     conn.close()
-
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000))
